@@ -1,0 +1,55 @@
+name: Deploy PokeAPI to Cloud Run
+
+on:
+  push:
+    branches:
+      - main  
+
+env:
+  PROJECT_ID: "gcp-pokeapi"     
+  PROJECT_NUMBER: "1083246166320"
+  REGION: "us-central1"
+  SERVICE_NAME: "pokeapi-service"
+  SERVICE_ACCOUNT: "gcp-service@gcp-pokeapi.iam.gserviceaccount.com"
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    # Permisos necesarios para generar el token de identidad
+    permissions:
+      contents: 'read'
+      id-token: 'write'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # 1. Autenticación con Google Cloud mediante Workload Identity Federation
+      - name: Google Auth
+        id: auth
+        uses: 'google-github-actions/auth@v2'
+        with:
+          token_format: 'access_token'
+          workload_identity_provider: 'projects/${{ env.PROJECT_NUMBER }}/locations/global/workloadIdentityPools/github-pool/providers/github-provider'
+          service_account: '${{ env.SERVICE_ACCOUNT }}'
+
+      # 2. Configurar Docker para autenticarse con Google Container Registry (GCR)
+      - name: Docker Auth
+        run: |
+          gcloud auth configure-docker --quiet
+
+      # 3. Construir la imagen Docker y subirla a GCR
+      - name: Build and Push Container
+        run: |
+          docker build -t gcr.io/${{ env.PROJECT_ID }}/${{ env.SERVICE_NAME }}:${{ github.sha }} .
+          docker push gcr.io/${{ env.PROJECT_ID }}/${{ env.SERVICE_NAME }}:${{ github.sha }}
+
+      # 4. Desplegar la imagen en Cloud Run
+      - name: Deploy to Cloud Run
+        run: |
+          gcloud run deploy ${{ env.SERVICE_NAME }} \
+            --image gcr.io/${{ env.PROJECT_ID }}/${{ env.SERVICE_NAME }}:${{ github.sha }} \
+            --region ${{ env.REGION }} \
+            --platform managed \
+            --allow-unauthenticated
